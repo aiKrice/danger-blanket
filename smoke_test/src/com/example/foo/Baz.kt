@@ -1,3 +1,5 @@
 package com.example.foo
 
-class Baz
+class Baz {
+    fun greet() = "hi"
+}
