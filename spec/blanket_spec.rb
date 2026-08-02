@@ -191,6 +191,33 @@ module Danger
           end
         end
       end
+
+      describe "#scm_html_link (private)" do
+        # Host plugins (github/gitlab/bitbucket_*) are only registered on the
+        # Dangerfile when running against a real PR/MR (see
+        # Dangerfile#initialize's `refresh_plugins if env_manager.pr?`), so
+        # these tests use a bare double instead of the shared @dangerfile to
+        # simulate that absence, eg. under `danger dry_run`/`danger local`.
+        it "delegates to whichever host plugin is registered, not just github" do
+          fake_dangerfile = double("Dangerfile")
+          allow(fake_dangerfile).to receive(:respond_to?) { |name| name == :gitlab }
+          gitlab = double("gitlab", html_link: "https://gitlab.example.com/org/repo/-/blob/sha/lib/foo.rb")
+          allow(fake_dangerfile).to receive(:gitlab).and_return(gitlab)
+
+          blanket = Danger::DangerBlanket.new(fake_dangerfile)
+
+          expect(blanket.send(:scm_html_link, "lib/foo.rb")).to eq("https://gitlab.example.com/org/repo/-/blob/sha/lib/foo.rb")
+        end
+
+        it "falls back to the plain file path when no host plugin is registered" do
+          fake_dangerfile = double("Dangerfile")
+          allow(fake_dangerfile).to receive(:respond_to?).and_return(false)
+
+          blanket = Danger::DangerBlanket.new(fake_dangerfile)
+
+          expect(blanket.send(:scm_html_link, "lib/foo.rb")).to eq("lib/foo.rb")
+        end
+      end
     end
   end
 end
