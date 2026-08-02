@@ -1,0 +1,8 @@
+{
+  "project_coverage": 42.5,
+  "files": [
+    { "path": "lib/foo.rb", "coverage": 60.0, "html_link": "https://reports.example.com/coverage/foo.html" },
+    { "path": "lib/bar.rb", "coverage": 90.0 },
+    { "path": "lib/untouched.rb", "coverage": 10.0 }
+  ]
+}

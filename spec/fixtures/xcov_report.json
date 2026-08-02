@@ -1,0 +1,12 @@
+{
+  "targets": [
+    {
+      "name": "MyApp.app",
+      "coverage": 0.425,
+      "files": [
+        { "path": "Sources/Foo.swift", "name": "Foo.swift", "coverage": 0.60 },
+        { "path": "Sources/Bar.swift", "name": "Bar.swift", "coverage": 0.90 }
+      ]
+    }
+  ]
+}
