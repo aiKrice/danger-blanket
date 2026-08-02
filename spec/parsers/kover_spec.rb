@@ -33,6 +33,15 @@ module Danger
         expect(link).to eq("https://example.com/report/ns-1a2b3c4d/sources/source-abcdef12.html")
       end
 
+      it "strips the .java extension too, for legacy Java sources (eg. GreenDAO)" do
+        parser = described_class.new(source_root: "app/src/main/java", html_dir: fixture("kover_html"))
+        report = parser.parse(fixture("kover_report.xml"))
+
+        link = parser.html_link(report.files["app/src/main/java/com/example/foo/Legacy.java"], "https://example.com/report")
+
+        expect(link).to eq("https://example.com/report/ns-1a2b3c4d/sources/source-3.html")
+      end
+
       it "returns nil when the package isn't found in the report's index" do
         parser = described_class.new(source_root: "app/src/main/java", html_dir: fixture("kover_html"))
         report = parser.parse(fixture("kover_report.xml"))

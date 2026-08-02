@@ -100,7 +100,7 @@ module Danger
           ns_index_content = ns_index_cache[ns]
           return nil unless ns_index_content
 
-          class_name = source_file_name.sub(/\.kt\z/, "")
+          class_name = source_file_name.sub(/\.(kt|java)\z/, "")
           [class_name, "#{class_name}Kt"].each do |candidate|
             match = ns_index_content.match(%r{<a href="(sources/source-[0-9a-f]+\.html)">#{Regexp.escape(candidate)}</a>})
             return match[1] if match

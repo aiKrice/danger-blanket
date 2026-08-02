@@ -9,5 +9,8 @@
     <sourcefile name="Baz.kt">
       <counter type="LINE" missed="80" covered="20"/>
     </sourcefile>
+    <sourcefile name="Legacy.java">
+      <counter type="LINE" missed="0" covered="10"/>
+    </sourcefile>
   </package>
 </report>
