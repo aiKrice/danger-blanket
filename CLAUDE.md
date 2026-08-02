@@ -105,6 +105,30 @@ lib/
 - No CI config yet (no `.github/workflows`, no `.travis.yml` equivalent) —
   this is still local-only, pre-publish.
 
+### End-to-end smoke test via `danger dry_run` (no push, no PR needed)
+
+`smoke_test/` + the root `Dangerfile` are a minimal fixture project used to
+exercise the plugin exactly as Danger would on a real PR, entirely offline:
+
+```
+bundle exec danger dry_run --base=<commit before the change> --head=<commit with the change>
+```
+
+Notes specific to this repo/plugin:
+
+- Danger's local-only diffing (`LocalOnlyGitRepo`) compares **committed**
+  refs (`merge_base..HEAD`), not working-tree edits — `--base`/`--head` (or
+  the defaults `origin/master`/`HEAD`) must both resolve to real commits, so
+  there always has to be at least one commit to diff against.
+- `danger dry_run` (and `danger local`) never call `refresh_plugins` on the
+  `Dangerfile` (`env_manager.pr?` is false for `LocalOnlyGitRepo`), so host
+  plugins (`github`, `gitlab`, `bitbucket_server`, `bitbucket_cloud`) are
+  **not defined at all** in this mode — calling `github.html_link` directly
+  raises `NoMethodError`. This is why `plugin.rb`'s fallback link goes
+  through `scm_html_link`, which probes `@dangerfile.respond_to?(...)` for
+  each known host plugin and falls back to a plain file path if none is
+  registered, instead of assuming GitHub is always present.
+
 ## Current status (as of this session)
 
 Local testing of the plugin. Branch renamed `main` → `master` (no commits yet

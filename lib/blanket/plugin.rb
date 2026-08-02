@@ -153,8 +153,20 @@ module Danger
       return nil if entry.coverage >= threshold
 
       href = resolved_parser.html_link(entry, hosted_report_base_url)
-      link = href ? "[#{file}](#{href})" : github.html_link(file)
+      link = href ? "[#{file}](#{href})" : scm_html_link(file)
       "#{link} | #{entry.coverage}% | #{threshold}%#{override ? ' (override)' : ''}"
+    end
+
+    # Host-provided fallback link (GitHub/GitLab/Bitbucket) for a file with
+    # no parser-resolved deep link. These host plugins only exist on
+    # `@dangerfile` when running against a real PR/MR, so this is skipped
+    # entirely under `danger dry_run`/`danger local` or an unsupported host
+    # — the plain file path is used instead rather than crashing.
+    SCM_HOST_PLUGINS = %i[github gitlab bitbucket_server bitbucket_cloud].freeze
+
+    def scm_html_link(file)
+      host = SCM_HOST_PLUGINS.find { |plugin_name| @dangerfile.respond_to?(plugin_name) }
+      host ? @dangerfile.send(host).html_link(file) : file
     end
   end
 end
