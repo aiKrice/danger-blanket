@@ -96,7 +96,7 @@ lib/
 
 ## Testing
 
-- `bundle exec rspec` — 37 examples currently, all green under local Ruby
+- `bundle exec rspec` — 40 examples currently, all green under local Ruby
   4.0.6. `spec/blanket_spec.rb` covers the plugin's orchestration logic end to
   end via a stubbed `Dangerfile`/`git`; `spec/parsers/*_spec.rb` cover each
   parser against fixture reports in `spec/fixtures/`.
@@ -129,11 +129,54 @@ Notes specific to this repo/plugin:
   each known host plugin and falls back to a plain file path if none is
   registered, instead of assuming GitHub is always present.
 
+### Real-world validation (production-scale reports, not just fixtures)
+
+Both parsers have been run against genuine coverage reports from real,
+large codebases (not committed here — see "never reference any employer or
+private codebase" above; this section only records the findings, not the
+data). Method: point the parser directly at a real report via a throwaway
+Ruby one-liner (`Danger::Blanket::Parsers::Kover.new(...).parse(path)`),
+outside of any Dangerfile.
+
+- **Kover**: validated against a ~915-file report from a large production
+  Android codebase (Kotlin + legacy GreenDAO Java classes). Found and fixed
+  a real bug: `source_link_in_namespace` only stripped a `.kt` suffix before
+  matching the file's own name against the HTML index, so every legacy
+  `.java` sourcefile failed to resolve a deep link (silently — no crash,
+  since `html_link` returning `nil` is a supported case — just a worse
+  link). Fixed by stripping `.java` too. Deep-link resolution went from
+  898/915 (98%) to 908/915 (99.2%). The remaining 7 misses are a structural
+  limit, not a bug: files where the real class name doesn't derive from the
+  filename at all (eg. `GamificationHelper.kt` actually defines
+  `DefaultGamificationHelper`; `SharedPrefProvider.kt` defines two unrelated
+  classes, neither named after the file) — unresolvable without parsing
+  Kotlin source for declared class names, which is out of scope. These
+  still degrade gracefully to a plain file link, so no user-facing failure.
+- **Xcov**: validated against a 735-file target from a real iOS app's test
+  run (`Shopmium.app`, coverage 31.85%, matching the raw xccov percentage
+  exactly). Parsed cleanly, no bugs found — relative-path resolution
+  against `Dir.pwd` was double-checked by re-running with the repo root
+  `chdir`'d to match what a real Dangerfile run would see. Notably, the
+  actual `xcov` gem (1.9.0, via its `xcodeproj` 1.28.1 dependency) **could
+  not run at all** against this specific real project — it crashes trying
+  to parse a `PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet`
+  attribute, an Xcode "Synchronized Groups" feature xcodeproj 1.28.1 doesn't
+  handle. Worked around by generating the real report data straight from
+  Apple's own `xcrun xccov view --report --json <xcresult>` and reshaping it
+  to xcov's `report.json` schema (rename `lineCoverage` → `coverage` at the
+  target and file level, keep `path`/`name` as-is) — same real coverage
+  data, without going through the broken gem. This is an xcov/xcodeproj
+  ecosystem bug, unrelated to danger-blanket; worth remembering if a fresh
+  real xcov report is needed again from a project using Synchronized Groups.
+
 ## Current status (as of this session)
 
-Local testing of the plugin. Branch renamed `main` → `master` (no commits yet
-— everything is currently untracked working tree). Homepage in the gemspec:
-`https://github.com/christophersaez/danger-blanket`, MIT licensed.
+Local testing of the plugin, including real-world validation (see above).
+Branch renamed `main` → `master`. Several commits in: initial skeleton,
+`smoke_test/` dry_run harness, the `scm_html_link` host-agnostic fallback
+fix (+ its tests), and the Kover `.java` extension fix (+ its test).
+Homepage in the gemspec: `https://github.com/christophersaez/danger-blanket`,
+MIT licensed. Not yet pushed to GitHub.
 
 ## Open items / things to watch
 
@@ -142,3 +185,6 @@ Local testing of the plugin. Branch renamed `main` → `master` (no commits yet
 - No `.rubocop.yml` / linter config yet — decide if one gets added before
   first publish.
 - No README yet.
+- Real GitHub-flow validation (real PR, real `github.html_link`, not just
+  `dry_run`) is the next planned validation step, once local report-parsing
+  validation is done.
