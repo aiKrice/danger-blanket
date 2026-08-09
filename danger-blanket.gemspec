@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.version       = Blanket::VERSION
   spec.authors       = ["Christopher Saez"]
   spec.email         = ["saez.chris@gmail.com"]
-  spec.description   = "A Danger plugin for reporting code coverage from any coverage tool, via pluggable parsers (xcov, Kover, or your own)."
+  spec.description   = "A Danger plugin for reporting code coverage from any coverage tool, via pluggable parsers (xccov, Kover, or your own)."
   spec.summary       = spec.description
   spec.homepage      = "https://github.com/christophersaez/danger-blanket"
   spec.license       = "MIT"

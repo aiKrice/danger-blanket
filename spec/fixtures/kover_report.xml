@@ -1,16 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <report name="report">
   <counter type="INSTRUCTION" missed="100" covered="100"/>
-  <counter type="LINE" missed="60" covered="40"/>
+  <counter type="LINE" missed="3" covered="3"/>
   <package name="com/example/foo">
+    <class name="com/example/foo/Bar" sourcefilename="Bar.kt">
+      <method name="greet" line="4">
+        <counter type="INSTRUCTION" missed="2" covered="4"/>
+        <counter type="LINE" missed="1" covered="1"/>
+      </method>
+      <counter type="LINE" missed="1" covered="2"/>
+    </class>
+    <class name="com/example/foo/Baz" sourcefilename="Baz.kt">
+      <method name="greet" line="4">
+        <counter type="INSTRUCTION" missed="4" covered="0"/>
+        <counter type="LINE" missed="1" covered="0"/>
+      </method>
+      <counter type="LINE" missed="2" covered="0"/>
+    </class>
     <sourcefile name="Bar.kt">
-      <counter type="LINE" missed="10" covered="90"/>
+      <line nr="3" mi="0" ci="3" mb="0" cb="0"/>
+      <line nr="4" mi="1" ci="2" mb="1" cb="1"/>
+      <line nr="5" mi="2" ci="0" mb="0" cb="0"/>
+      <counter type="LINE" missed="1" covered="2"/>
     </sourcefile>
     <sourcefile name="Baz.kt">
-      <counter type="LINE" missed="80" covered="20"/>
+      <line nr="3" mi="1" ci="0" mb="0" cb="0"/>
+      <line nr="4" mi="2" ci="0" mb="0" cb="0"/>
+      <counter type="LINE" missed="2" covered="0"/>
     </sourcefile>
     <sourcefile name="Legacy.java">
-      <counter type="LINE" missed="0" covered="10"/>
+      <line nr="1" mi="0" ci="1" mb="0" cb="0"/>
+      <counter type="LINE" missed="0" covered="1"/>
     </sourcefile>
   </package>
 </report>

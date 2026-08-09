@@ -1,4 +1,5 @@
 require File.expand_path("spec_helper", __dir__)
+require "tmpdir"
 
 module Danger
   describe Danger::DangerBlanket do
@@ -189,6 +190,58 @@ module Danger
             markdown = @dangerfile.status_report[:markdowns].first.to_s
             expect(markdown).to include("60.0% | 70% (override)")
           end
+        end
+      end
+
+      describe "html report generation" do
+        around do |example|
+          Dir.mktmpdir("blanket-html-report") do |dir|
+            @html_report_dir = File.join(dir, "coverage_report")
+            example.run
+          end
+        end
+
+        before do
+          @blanket.report_file = fixture("kover_report.xml")
+          @blanket.parser = :kover
+          @blanket.parser_options = { source_root: "smoke_test/src" }
+          @blanket.file_threshold = 90
+          @blanket.hosted_report_base_url = "https://example.com/report"
+          allow(@blanket.git).to receive(:modified_files).and_return(["smoke_test/src/com/example/foo/Bar.kt"])
+          allow(@blanket.git).to receive(:added_files).and_return([])
+        end
+
+        it "does nothing extra when html_report_dir is nil" do
+          @blanket.file_threshold = nil # avoid needing to stub link resolution for this assertion
+
+          @blanket.report
+
+          expect(File).not_to exist(@html_report_dir)
+        end
+
+        it "writes a static HTML report to html_report_dir and links to it deterministically" do
+          @blanket.html_report_dir = @html_report_dir
+
+          @blanket.report
+
+          expect(File).to exist(File.join(@html_report_dir, "report.json"))
+          expect(File).to exist(File.join(@html_report_dir, "index.html"))
+
+          markdown = @dangerfile.status_report[:markdowns].first.to_s
+          expect(markdown).to include("[smoke_test/src/com/example/foo/Bar.kt](https://example.com/report/index.html#smoke_test/src/com/example/foo/Bar.kt:5)")
+        end
+
+        it "falls back to the parser/SCM link chain when hosted_report_base_url isn't set, even with html_report_dir" do
+          @blanket.html_report_dir = @html_report_dir
+          @blanket.hosted_report_base_url = nil
+          allow(@blanket.github).to receive(:html_link)
+            .with("smoke_test/src/com/example/foo/Bar.kt")
+            .and_return("[smoke_test/src/com/example/foo/Bar.kt](https://github.com/org/repo/blob/sha/smoke_test/src/com/example/foo/Bar.kt)")
+
+          @blanket.report
+
+          markdown = @dangerfile.status_report[:markdowns].first.to_s
+          expect(markdown).to include("[smoke_test/src/com/example/foo/Bar.kt](https://github.com/org/repo/blob/sha/smoke_test/src/com/example/foo/Bar.kt) | 66.67% | 90%")
         end
       end
 

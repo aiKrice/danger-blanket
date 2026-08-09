@@ -10,61 +10,56 @@ module Danger
       # Options:
       #   :source_root (required) source root the report's package names are
       #                relative to, eg. "app/src/main/java".
-      #   :html_dir    (optional) directory containing Kover's generated HTML
-      #                report, used to resolve #html_link.
       class Kover < Base
         def initialize(options = {})
           super
           @source_root = options[:source_root]
           raise ArgumentError, "Parsers::Kover requires a :source_root option (eg. 'app/src/main/java')" if @source_root.nil?
-
-          @html_dir = options[:html_dir]
         end
 
         def parse(report_file)
           root = REXML::Document.new(File.read(report_file)).root
 
-          project_coverage = line_coverage(root.get_elements("counter"))
+          project_counts = counter_counts(root.get_elements("counter"))
 
           files = {}
           root.get_elements("package").each do |package|
+            functions_by_sourcefile = functions_by_sourcefile(package)
+
             package.get_elements("sourcefile").each do |sourcefile|
-              coverage = line_coverage(sourcefile.get_elements("counter"))
-              next if coverage.nil?
+              counts = counter_counts(sourcefile.get_elements("counter"))
+              next if counts.nil?
+
+              covered, total = counts
+              lines = line_details(sourcefile)
+              functions = (functions_by_sourcefile[sourcefile.attributes["name"]] || []).sort_by(&:line)
 
               path = "#{@source_root}/#{package.attributes['name']}/#{sourcefile.attributes['name']}"
               files[path] = FileCoverage.new(
-                coverage: coverage,
-                meta: {
-                  package: package.attributes["name"].tr("/", "."),
-                  sourcefile: sourcefile.attributes["name"],
-                }
+                coverage: percentage(covered, total),
+                covered_lines: covered,
+                executable_lines: total,
+                first_uncovered_line: lines.find { |line| line.status == :uncovered }&.number,
+                lines: lines,
+                functions: functions,
+                meta: {}
               )
             end
           end
 
-          Report.new(project_coverage: project_coverage, files: files)
-        end
-
-        # Kover's HTML report is one page per package (`ns-X/index.html`),
-        # itself linking to one page per source file
-        # (`ns-X/sources/source-N.html`). Resolving a link means walking both
-        # levels, keyed by class name rather than file name.
-        def html_link(file_coverage, hosted_report_base_url)
-          return nil unless @html_dir && hosted_report_base_url
-
-          ns = package_to_ns[file_coverage.meta[:package]]
-          return nil unless ns
-
-          source_link = source_link_in_namespace(ns, file_coverage.meta[:sourcefile])
-          return nil unless source_link
-
-          "#{hosted_report_base_url}/#{ns}/#{source_link}"
+          Report.new(
+            project_coverage: project_counts && percentage(*project_counts),
+            covered_lines: project_counts&.first,
+            executable_lines: project_counts&.last,
+            files: files
+          )
         end
 
         private
 
-        def line_coverage(counters)
+        # [covered, total] executable-line counts from a <counter type="LINE">
+        # element, or nil if the element/total is missing/zero.
+        def counter_counts(counters)
           line_counter = counters.find { |counter| counter.attributes["type"] == "LINE" }
           return nil unless line_counter
 
@@ -73,44 +68,75 @@ module Danger
           total = missed + covered
           return nil if total.zero?
 
+          [covered, total]
+        end
+
+        # Convenience for the (rarer) case where only a percentage is
+        # needed, eg. per-method coverage.
+        def line_coverage(counters)
+          counts = counter_counts(counters)
+          return nil unless counts
+
+          percentage(*counts)
+        end
+
+        def percentage(covered, total)
           (covered.to_f / total * 100).round(2)
         end
 
-        # Maps package name -> ns-X folder, parsed once from the report's root index.
-        def package_to_ns
-          @package_to_ns ||= begin
-            index_file = File.join(@html_dir, "index.html")
-            return {} unless File.file?(index_file)
+        # Per-line status straight from JaCoCo's own <line nr mi ci> data —
+        # mi/ci are missed/covered *instructions* on that line, so a line
+        # with both can be "partial" (eg. an inline conditional where only
+        # one branch ran) even though every individual line technically
+        # "executed". JaCoCo only emits a <line> for lines with mi+ci>0, so
+        # a line with no entry at all (mi==0 && ci==0, or simply absent) is
+        # non-executable — surfaced to callers as :skipped by the shared
+        # HTML report renderer, not here.
+        def line_details(sourcefile)
+          sourcefile.get_elements("line").map do |line|
+            mi = line.attributes["mi"].to_i
+            ci = line.attributes["ci"].to_i
 
-            File.read(index_file)
-                .scan(%r{<a href="(ns-[0-9a-f]+)/index\.html">([^<]+)</a>})
-                .each_with_object({}) { |(ns, package_name), acc| acc[package_name] = ns }
+            status =
+              if mi.zero? && ci.zero?
+                :skipped
+              elsif mi.zero?
+                :covered
+              elsif ci.zero?
+                :uncovered
+              else
+                :partial
+              end
+
+            LineCoverage.new(number: line.attributes["nr"].to_i, status: status, spans: nil)
           end
         end
 
-        # Finds the source-N.html page for a given file within its package's
-        # ns-X/index.html. Kover pages are keyed by class name, so tries the
-        # file's own name first, then the Kotlin file-facade class name (eg.
-        # "FooExtensions.kt" -> "FooExtensionsKt").
-        def source_link_in_namespace(ns, source_file_name)
-          unless ns_index_cache.key?(ns)
-            ns_index_file = File.join(@html_dir, ns, "index.html")
-            ns_index_cache[ns] = File.file?(ns_index_file) ? File.read(ns_index_file) : nil
+        # Method-level coverage lives on <class sourcefilename="Foo.kt">,
+        # a sibling of <sourcefile name="Foo.kt"> under the same <package>
+        # — not nested under it. Multiple classes can share one sourcefile
+        # (eg. two unrelated top-level classes in one Kotlin file), so this
+        # groups by sourcefilename and merges their methods.
+        def functions_by_sourcefile(package)
+          result = Hash.new { |hash, key| hash[key] = [] }
+
+          package.get_elements("class").each do |klass|
+            sourcefile_name = klass.attributes["sourcefilename"]
+            next if sourcefile_name.nil?
+
+            klass.get_elements("method").each do |method|
+              coverage = line_coverage(method.get_elements("counter"))
+              next if coverage.nil? || coverage >= 100
+
+              result[sourcefile_name] << FunctionCoverage.new(
+                name: method.attributes["name"],
+                line: method.attributes["line"].to_i,
+                coverage: coverage
+              )
+            end
           end
-          ns_index_content = ns_index_cache[ns]
-          return nil unless ns_index_content
 
-          class_name = source_file_name.sub(/\.(kt|java)\z/, "")
-          [class_name, "#{class_name}Kt"].each do |candidate|
-            match = ns_index_content.match(%r{<a href="(sources/source-[0-9a-f]+\.html)">#{Regexp.escape(candidate)}</a>})
-            return match[1] if match
-          end
-
-          nil
-        end
-
-        def ns_index_cache
-          @ns_index_cache ||= {}
+          result
         end
       end
     end

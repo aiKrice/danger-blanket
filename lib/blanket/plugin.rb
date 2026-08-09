@@ -1,6 +1,7 @@
 require "blanket/report"
+require "blanket/html_report"
 require "blanket/parsers/base"
-require "blanket/parsers/xcov"
+require "blanket/parsers/xccov"
 require "blanket/parsers/kover"
 require "blanket/parsers/json"
 
@@ -11,14 +12,15 @@ module Danger
   #
   # @example Basic usage with a built-in parser
   #
-  #          blanket.report_file = "xcov_report/report.json"
-  #          blanket.parser = :xcov
-  #          blanket.parser_options = { target: "MyApp.app", html_dir: "xcov_report" }
+  #          blanket.report_file = "MyApp.xcresult"
+  #          blanket.parser = :xccov
+  #          blanket.parser_options = { target: "MyApp.app" }
   #          blanket.project_threshold = 49
   #          blanket.file_threshold = 85
   #          blanket.file_threshold_overrides = { "Sources/Legacy.swift" => 0 }
   #          blanket.warning_as_error = true
-  #          blanket.hosted_report_base_url = "https://dashboard.example.com/coverage/ios/42/xcov_report"
+  #          blanket.html_report_dir = "coverage_report"
+  #          blanket.hosted_report_base_url = "https://dashboard.example.com/coverage/ios/42/coverage_report"
   #          blanket.report
   #
   # @example Using a custom parser for an unsupported tool
@@ -28,22 +30,23 @@ module Danger
   #          blanket.report
   #
   # @see Christopher Saez/danger-blanket
-  # @tags coverage, xcov, kover, jacoco
+  # @tags coverage, xccov, kover, jacoco
   class DangerBlanket < Plugin
     # Built-in parsers, resolved when `parser` is set to a Symbol.
     PARSERS = {
-      xcov: Blanket::Parsers::Xcov,
+      xccov: Blanket::Parsers::Xccov,
       kover: Blanket::Parsers::Kover,
       json: Blanket::Parsers::Json,
     }.freeze
 
-    # Path to the coverage report to parse. When missing, {#report} is a no-op
-    # (matches the pattern of coverage tooling not always running, eg. skipped
-    # on docs-only PRs).
+    # Path to the coverage report to parse. When missing, {#report} is a
+    # no-op (matches the pattern of coverage tooling not always running, eg.
+    # skipped on docs-only PRs). For :xccov this is a path to an `.xcresult`
+    # bundle (a directory); for the other built-in parsers, a regular file.
     # @return [String, nil]
     attr_accessor :report_file
 
-    # Which parser to use: a Symbol (`:xcov`, `:kover`, `:json`) resolved
+    # Which parser to use: a Symbol (`:xccov`, `:kover`, `:json`) resolved
     # against {PARSERS}, or any object responding to `#parse` (and optionally
     # `#html_link`) for an unsupported tool.
     # @return [Symbol, Object, nil]
@@ -75,11 +78,42 @@ module Danger
     # @return [Boolean]
     attr_accessor :warning_as_error
 
-    # Base URL of the hosted HTML report, forwarded to the parser to build
-    # clickable per-file links. When nil, or when the parser can't resolve a
-    # link, falls back to a plain GitHub link to the file.
+    # Base URL of the hosted HTML report, used to build clickable per-file
+    # links. When {#html_report_dir} is set, links are resolved
+    # deterministically against the report {#report} just generated there;
+    # otherwise falls back to the parser's own `#html_link` (for a
+    # pre-existing report generated some other way). When nil, or when
+    # neither resolves a link, falls back to a plain GitHub link to the file.
     # @return [String, nil]
     attr_accessor :hosted_report_base_url
+
+    # When set, {#report} also renders a static, browsable HTML coverage
+    # site into this directory via {Danger::Blanket::HtmlReport} — the same
+    # renderer regardless of which parser produced the {Danger::Blanket::Report}.
+    # Only parsers that populate per-file line detail (`:kover`, `:xccov`)
+    # can feed it. Deploying/hosting the written directory (eg. an S3 sync)
+    # is left to your own CI, outside this gem's scope.
+    # @return [String, nil]
+    attr_accessor :html_report_dir
+
+    # Title shown in the generated HTML report's top bar and browser tab.
+    # Ignored when {#html_report_dir} is nil.
+    # @return [String, nil]
+    attr_accessor :html_report_title
+
+    # A local image file path (svg/png/ico/jpg/gif/webp), copied into the
+    # generated report, or an `http(s)://` URL, used as-is with no
+    # download — to use as the report's browser-tab icon, instead of the
+    # bundled default. Independent from {#html_report_logo} — set one,
+    # both, or neither. Ignored when {#html_report_dir} is nil.
+    # @return [String, nil]
+    attr_accessor :html_report_favicon
+
+    # Same as {#html_report_favicon} (local path or `http(s)://` URL), but
+    # for the top-bar logo shown inside the generated report itself.
+    # Ignored when {#html_report_dir} is nil.
+    # @return [String, nil]
+    attr_accessor :html_report_logo
 
     def initialize(dangerfile)
       super
@@ -88,16 +122,19 @@ module Danger
       self.warning_as_error = false
     end
 
-    # Parses {#report_file} and reports project/file coverage violations.
-    # No-op when {#report_file} is nil or missing on disk.
+    # Parses {#report_file}, optionally renders {#html_report_dir}, and
+    # reports project/file coverage violations. No-op when {#report_file} is
+    # nil or missing on disk.
     def report
-      return unless report_file && File.file?(report_file)
+      return unless report_file && File.exist?(report_file)
 
       resolved_parser = resolve_parser
       parsed = resolved_parser.parse(report_file)
 
+      generated_html_report = generate_html_report(parsed)
+
       check_project_threshold(parsed)
-      check_file_thresholds(parsed, resolved_parser)
+      check_file_thresholds(parsed, resolved_parser, generated_html_report)
     end
 
     private
@@ -110,10 +147,24 @@ module Danger
 
         klass.new(parser_options)
       when nil
-        raise ArgumentError, "blanket.parser must be set (eg. :xcov, :kover, :json, or a custom parser instance)"
+        raise ArgumentError, "blanket.parser must be set (eg. :xccov, :kover, :json, or a custom parser instance)"
       else
         parser
       end
+    end
+
+    def generate_html_report(parsed)
+      return false unless html_report_dir
+
+      changed_files = git.modified_files + git.added_files
+      Blanket::HtmlReport.generate(
+        parsed, html_report_dir,
+        changed_files: changed_files,
+        title: html_report_title || "Coverage Report",
+        favicon: html_report_favicon,
+        logo: html_report_logo
+      )
+      true
     end
 
     def severity_method
@@ -127,11 +178,11 @@ module Danger
       send(severity_method, "🔴 Project line coverage is #{parsed.project_coverage}%, below the required #{project_threshold}%.")
     end
 
-    def check_file_thresholds(parsed, resolved_parser)
+    def check_file_thresholds(parsed, resolved_parser, generated_html_report)
       return if file_threshold.nil?
 
       changed_files = git.modified_files + git.added_files
-      rows = changed_files.filter_map { |file| file_violation_row(file, parsed, resolved_parser) }
+      rows = changed_files.filter_map { |file| file_violation_row(file, parsed, resolved_parser, generated_html_report) }
 
       return if rows.empty?
 
@@ -144,7 +195,7 @@ module Danger
       send(severity_method, "#{rows.size} file(s) below their coverage threshold, see table above.")
     end
 
-    def file_violation_row(file, parsed, resolved_parser)
+    def file_violation_row(file, parsed, resolved_parser, generated_html_report)
       entry = parsed.files[file]
       return nil if entry.nil?
 
@@ -152,16 +203,29 @@ module Danger
       threshold = override ? file_threshold_overrides[file] : file_threshold
       return nil if entry.coverage >= threshold
 
-      href = resolved_parser.html_link(entry, hosted_report_base_url)
+      href = resolved_href(file, entry, resolved_parser, generated_html_report)
       link = href ? "[#{file}](#{href})" : scm_html_link(file)
       "#{link} | #{entry.coverage}% | #{threshold}%#{override ? ' (override)' : ''}"
     end
 
+    # Bare URL for a file's deep link, or nil to let the caller fall back to
+    # {#scm_html_link}. When {#html_report_dir} was just generated, this is
+    # deterministic (no scraping needed — this module owns both the
+    # generator and its addressing scheme); otherwise falls back to the
+    # parser's own #html_link, for a report generated some other way.
+    def resolved_href(file, entry, resolved_parser, generated_html_report)
+      if generated_html_report && hosted_report_base_url
+        Blanket::HtmlReport.link_for(file, hosted_report_base_url, first_uncovered_line: entry.first_uncovered_line)
+      else
+        resolved_parser.html_link(entry, hosted_report_base_url)
+      end
+    end
+
     # Host-provided fallback link (GitHub/GitLab/Bitbucket) for a file with
-    # no parser-resolved deep link. These host plugins only exist on
-    # `@dangerfile` when running against a real PR/MR, so this is skipped
-    # entirely under `danger dry_run`/`danger local` or an unsupported host
-    # — the plain file path is used instead rather than crashing.
+    # no resolved deep link. These host plugins only exist on `@dangerfile`
+    # when running against a real PR/MR, so this is skipped entirely under
+    # `danger dry_run`/`danger local` or an unsupported host — the plain
+    # file path is used instead rather than crashing.
     SCM_HOST_PLUGINS = %i[github gitlab bitbucket_server bitbucket_cloud].freeze
 
     def scm_html_link(file)
