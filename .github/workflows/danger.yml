@@ -21,6 +21,13 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
 
+      # macos-15 runners ship Xcode itself but not every platform's
+      # simulator runtime pre-installed (this image only has visionOS by
+      # default) - the iOS runtime has to be fetched explicitly, or
+      # `xcodebuild test` fails to find any iOS Simulator destination at all.
+      - name: Install iOS platform (simulator runtime)
+        run: xcodebuild -downloadPlatform iOS
+
       - name: Run tests with code coverage
         working-directory: ios_smoke_test
         run: |
