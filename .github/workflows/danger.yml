@@ -21,19 +21,20 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
 
-      # macos-15 runners ship several Xcode versions side by side, but the
-      # one `xcode-select` defaults to only has the visionOS Simulator
-      # runtime pre-installed, not iOS - `xcodebuild test` then finds no iOS
-      # Simulator destination at all. Try every installed Xcode first (one
-      # of them usually does have it, no network needed); only fall back to
-      # an actual download (`-downloadPlatform`, needs a signed-in Apple ID
-      # to work reliably on CI) if truly none of them do.
-      - name: Select an Xcode with the iOS Simulator runtime
+      # macos-15 runners ship several Xcode versions side by side. Plenty of
+      # real iPhone simulators already exist regardless of which one is
+      # selected - the actual problem was that this project was authored
+      # with a much newer Xcode (26.6) than an old one on the runner (16.x)
+      # understands, so `xcodebuild -showdestinations` refused to consider
+      # *any* simulator eligible for the scheme at all (not a missing
+      # device/runtime issue). Pick the newest installed Xcode with an iOS
+      # runtime, closest to what the project was actually authored with.
+      - name: Select the newest Xcode with an iOS runtime
         run: |
           echo "Installed Xcode versions:"
           ls /Applications | grep Xcode
 
-          for dev_dir in /Applications/Xcode*.app/Contents/Developer; do
+          for dev_dir in $(ls -d /Applications/Xcode*.app/Contents/Developer | sort -rV); do
             sudo xcode-select -s "$dev_dir"
             if xcrun simctl list runtimes 2>/dev/null | grep -q "iOS "; then
               echo "Using $dev_dir (has an iOS runtime)"
@@ -46,46 +47,16 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -downloadPlatform iOS
 
-      # The Xcode picked above has an iOS runtime installed, but that
-      # doesn't mean it has any simulator *device* provisioned for it (the
-      # runner's default device set is tied to whichever Xcode was
-      # originally selected) - create one explicitly instead of guessing
-      # what already exists, boot it, and target it by UDID (not name -
-      # `-showdestinations` is xcodebuild's own authoritative view of what
-      # it considers usable, which is what actually matters here).
-      - name: Create an iOS Simulator device for testing
-        id: sim
-        working-directory: ios_smoke_test
-        run: |
-          echo "xcodebuild destinations before creating a device:"
-          xcodebuild -showdestinations -project BlanketiOS.xcodeproj -scheme BlanketiOS || true
-
-          runtime_id=$(xcrun simctl list runtimes available --json | jq -r '[.runtimes[] | select(.identifier | contains("SimRuntime.iOS"))] | max_by(.version) | .identifier')
-          echo "Runtime: $runtime_id"
-
-          device_type_id=$(xcrun simctl list devicetypes --json | jq -r '[.devicetypes[] | select(.name == "iPhone 16")] | first | .identifier // empty')
-          if [ -z "$device_type_id" ]; then
-            device_type_id=$(xcrun simctl list devicetypes --json | jq -r '[.devicetypes[] | select(.name | startswith("iPhone"))] | last | .identifier')
-          fi
-          echo "Device type: $device_type_id"
-
-          udid=$(xcrun simctl create CI-Test-Device "$device_type_id" "$runtime_id")
-          echo "Created simulator: $udid"
-          xcrun simctl boot "$udid"
-          xcrun simctl list devices available
-
-          echo "xcodebuild destinations after creating a device:"
-          xcodebuild -showdestinations -project BlanketiOS.xcodeproj -scheme BlanketiOS || true
-
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-
       - name: Run tests with code coverage
         working-directory: ios_smoke_test
         run: |
+          echo "xcodebuild destinations:"
+          xcodebuild -showdestinations -project BlanketiOS.xcodeproj -scheme BlanketiOS || true
+
           xcodebuild test \
             -project BlanketiOS.xcodeproj \
             -scheme BlanketiOS \
-            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -enableCodeCoverage YES \
             -resultBundlePath TestResults.xcresult
 
