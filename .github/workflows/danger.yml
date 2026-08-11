@@ -46,13 +46,32 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -downloadPlatform iOS
 
+      # The Xcode picked above has an iOS runtime installed, but that
+      # doesn't mean it has any simulator *device* provisioned for it (the
+      # runner's default device set is tied to whichever Xcode was
+      # originally selected) - create one explicitly instead of guessing
+      # what already exists.
+      - name: Create an iOS Simulator device for testing
+        run: |
+          runtime_id=$(xcrun simctl list runtimes available --json | jq -r '[.runtimes[] | select(.identifier | contains("SimRuntime.iOS"))] | max_by(.version) | .identifier')
+          echo "Runtime: $runtime_id"
+
+          device_type_id=$(xcrun simctl list devicetypes --json | jq -r '[.devicetypes[] | select(.name == "iPhone 16")] | first | .identifier // empty')
+          if [ -z "$device_type_id" ]; then
+            device_type_id=$(xcrun simctl list devicetypes --json | jq -r '[.devicetypes[] | select(.name | startswith("iPhone"))] | last | .identifier')
+          fi
+          echo "Device type: $device_type_id"
+
+          xcrun simctl create CI-Test-Device "$device_type_id" "$runtime_id"
+          xcrun simctl list devices available
+
       - name: Run tests with code coverage
         working-directory: ios_smoke_test
         run: |
           xcodebuild test \
             -project BlanketiOS.xcodeproj \
             -scheme BlanketiOS \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination 'platform=iOS Simulator,name=CI-Test-Device' \
             -enableCodeCoverage YES \
             -resultBundlePath TestResults.xcresult
 
