@@ -50,9 +50,16 @@ jobs:
       # doesn't mean it has any simulator *device* provisioned for it (the
       # runner's default device set is tied to whichever Xcode was
       # originally selected) - create one explicitly instead of guessing
-      # what already exists.
+      # what already exists, boot it, and target it by UDID (not name -
+      # `-showdestinations` is xcodebuild's own authoritative view of what
+      # it considers usable, which is what actually matters here).
       - name: Create an iOS Simulator device for testing
+        id: sim
+        working-directory: ios_smoke_test
         run: |
+          echo "xcodebuild destinations before creating a device:"
+          xcodebuild -showdestinations -project BlanketiOS.xcodeproj -scheme BlanketiOS || true
+
           runtime_id=$(xcrun simctl list runtimes available --json | jq -r '[.runtimes[] | select(.identifier | contains("SimRuntime.iOS"))] | max_by(.version) | .identifier')
           echo "Runtime: $runtime_id"
 
@@ -62,8 +69,15 @@ jobs:
           fi
           echo "Device type: $device_type_id"
 
-          xcrun simctl create CI-Test-Device "$device_type_id" "$runtime_id"
+          udid=$(xcrun simctl create CI-Test-Device "$device_type_id" "$runtime_id")
+          echo "Created simulator: $udid"
+          xcrun simctl boot "$udid"
           xcrun simctl list devices available
+
+          echo "xcodebuild destinations after creating a device:"
+          xcodebuild -showdestinations -project BlanketiOS.xcodeproj -scheme BlanketiOS || true
+
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       - name: Run tests with code coverage
         working-directory: ios_smoke_test
@@ -71,7 +85,7 @@ jobs:
           xcodebuild test \
             -project BlanketiOS.xcodeproj \
             -scheme BlanketiOS \
-            -destination 'platform=iOS Simulator,name=CI-Test-Device' \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -enableCodeCoverage YES \
             -resultBundlePath TestResults.xcresult
 
