@@ -1,0 +1,17 @@
+$LOAD_PATH.unshift(File.join(__dir__, "..", "lib"))
+require "danger_plugin"
+
+# Boilerplate app-lifecycle files, not worth tracking coverage on - mirrors
+# the .xccovignore convention documented in this repo's CLAUDE.md.
+blanket.report_file = "TestResults.xcresult"
+blanket.parser = :xccov
+blanket.parser_options = {
+  target: "BlanketiOS.app",
+  ignore_patterns: ["AppDelegate\\.swift$", "SceneDelegate\\.swift$", "ViewController\\.swift$"],
+}
+blanket.project_threshold = 50
+blanket.file_threshold = 80
+blanket.warning_as_error = false
+blanket.html_report_dir = "coverage_report"
+blanket.html_report_title = "BlanketiOS coverage"
+blanket.report

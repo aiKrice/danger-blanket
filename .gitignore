@@ -8,4 +8,12 @@
 /spec/reports/
 /tmp/
 /smoke_test/coverage_report/
+/ios_smoke_test/coverage_report/
+/ios_smoke_test/TestResults.xcresult/
 *.gem
+.DS_Store
+
+# Xcode: user/IDE session state, never meant to be shared between machines.
+xcuserdata/
+*.xcuserstate
+DerivedData/

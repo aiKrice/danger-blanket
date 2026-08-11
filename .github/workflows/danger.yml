@@ -1,0 +1,50 @@
+name: Danger
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ios-smoke-test:
+    # Builds+tests the real Xcode fixture project under ios_smoke_test/ with
+    # code coverage enabled, then runs danger-blanket for real (not
+    # dry_run) against this PR via the :xccov parser. See ios_smoke_test/Dangerfile.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      - name: Run tests with code coverage
+        working-directory: ios_smoke_test
+        run: |
+          xcodebuild test \
+            -project BlanketiOS.xcodeproj \
+            -scheme BlanketiOS \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -enableCodeCoverage YES \
+            -resultBundlePath TestResults.xcresult
+
+      - name: Run danger-blanket
+        working-directory: ios_smoke_test
+        env:
+          DANGER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bundle exec danger --dangerfile=Dangerfile
+
+      # Not hosted anywhere yet (see CLAUDE.md), so links in the PR comment
+      # fall back to plain GitHub file links - upload as a build artifact so
+      # the full line-by-line report can still be downloaded and opened
+      # locally from the workflow run.
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: ios_smoke_test/coverage_report/
+          if-no-files-found: ignore

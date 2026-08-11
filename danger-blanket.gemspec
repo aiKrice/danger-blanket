@@ -10,10 +10,15 @@ Gem::Specification.new do |spec|
   spec.email         = ["saez.chris@gmail.com"]
   spec.description   = "A Danger plugin for reporting code coverage from any coverage tool, via pluggable parsers (xccov, Kover, or your own)."
   spec.summary       = spec.description
-  spec.homepage      = "https://github.com/christophersaez/danger-blanket"
+  spec.homepage      = "https://github.com/aiKrice/danger-blanket"
   spec.license       = "MIT"
 
+  # git-tracked (for CI/reproducibility) but excluded from the packaged gem:
+  # a real Xcode project used to smoke-test the Xccov parser locally,
+  # heavier than something every `gem install danger-blanket` should have
+  # to download.
   spec.files         = `git ls-files`.split($INPUT_RECORD_SEPARATOR)
+                          .reject { |f| f.start_with?("ios_smoke_test/") }
   spec.test_files    = spec.files.grep(%r{^spec/})
   spec.require_paths = ["lib"]
 

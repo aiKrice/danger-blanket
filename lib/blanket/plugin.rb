@@ -18,6 +18,7 @@ module Danger
   #          blanket.project_threshold = 49
   #          blanket.file_threshold = 85
   #          blanket.file_threshold_overrides = { "Sources/Legacy.swift" => 0 }
+  #          blanket.warn_on_stale_overrides = true
   #          blanket.warning_as_error = true
   #          blanket.html_report_dir = "coverage_report"
   #          blanket.hosted_report_base_url = "https://dashboard.example.com/coverage/ios/42/coverage_report"
@@ -73,6 +74,17 @@ module Danger
     # @return [Hash<String, Numeric>]
     attr_accessor :file_threshold_overrides
 
+    # When true, a changed file whose coverage now exceeds its
+    # {#file_threshold_overrides} entry gets flagged with a *separate*
+    # warning suggesting the override be raised — catches an override that
+    # was left in place after the code it was excusing got real tests,
+    # quietly becoming a permanent loophole. Always uses `warn`, regardless
+    # of {#warning_as_error} (this is a suggestion, never a violation).
+    # Off by default: opt in explicitly, since not every project wants the
+    # extra noise.
+    # @return [Boolean]
+    attr_accessor :warn_on_stale_overrides
+
     # When true, violations are reported with `fail` (blocks the PR). When
     # false (default), they're reported with `warn`.
     # @return [Boolean]
@@ -120,6 +132,7 @@ module Danger
       self.parser_options = {}
       self.file_threshold_overrides = {}
       self.warning_as_error = false
+      self.warn_on_stale_overrides = false
     end
 
     # Parses {#report_file}, optionally renders {#html_report_dir}, and
@@ -181,9 +194,30 @@ module Danger
     def check_file_thresholds(parsed, resolved_parser, generated_html_report)
       return if file_threshold.nil?
 
-      changed_files = git.modified_files + git.added_files
-      rows = changed_files.filter_map { |file| file_violation_row(file, parsed, resolved_parser, generated_html_report) }
+      below_threshold_rows = []
+      stale_override_rows = []
 
+      (git.modified_files + git.added_files).each do |file|
+        entry = parsed.files[file]
+        next if entry.nil?
+
+        override = file_threshold_overrides[file]
+        threshold = override || file_threshold
+
+        if entry.coverage < threshold
+          link = file_link(file, entry, resolved_parser, generated_html_report)
+          below_threshold_rows << "#{link} | #{entry.coverage}% | #{threshold}%#{override ? ' (override)' : ''}"
+        elsif warn_on_stale_overrides && override && entry.coverage > override
+          link = file_link(file, entry, resolved_parser, generated_html_report)
+          stale_override_rows << "#{link} | #{entry.coverage}% | #{override}%"
+        end
+      end
+
+      report_below_threshold(below_threshold_rows)
+      report_stale_overrides(stale_override_rows)
+    end
+
+    def report_below_threshold(rows)
       return if rows.empty?
 
       message = +"### 📊 Coverage below threshold\n\n"
@@ -195,17 +229,23 @@ module Danger
       send(severity_method, "#{rows.size} file(s) below their coverage threshold, see table above.")
     end
 
-    def file_violation_row(file, parsed, resolved_parser, generated_html_report)
-      entry = parsed.files[file]
-      return nil if entry.nil?
+    # Always `warn` (never `fail`, regardless of {#warning_as_error}) — a
+    # file exceeding its override isn't a violation, just worth a nudge.
+    def report_stale_overrides(rows)
+      return if rows.empty?
 
-      override = file_threshold_overrides.key?(file)
-      threshold = override ? file_threshold_overrides[file] : file_threshold
-      return nil if entry.coverage >= threshold
+      message = +"### 📈 Coverage override could be raised\n\n"
+      message << "File | Coverage | Current override |\n"
+      message << "| --- | --- | --- |\n"
+      message << rows.join("\n")
+      markdown(message)
 
+      warn("⚠️ #{rows.size} file(s) now exceed their custom coverage threshold override in file_threshold_overrides, consider raising it, see table above.")
+    end
+
+    def file_link(file, entry, resolved_parser, generated_html_report)
       href = resolved_href(file, entry, resolved_parser, generated_html_report)
-      link = href ? "[#{file}](#{href})" : scm_html_link(file)
-      "#{link} | #{entry.coverage}% | #{threshold}%#{override ? ' (override)' : ''}"
+      href ? "[#{file}](#{href})" : scm_html_link(file)
     end
 
     # Bare URL for a file's deep link, or nil to let the caller fall back to

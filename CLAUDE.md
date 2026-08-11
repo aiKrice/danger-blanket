@@ -106,7 +106,15 @@ lib/
   `check_file_thresholds`. It intersects the report's files with
   `git.modified_files + git.added_files` — only changed files get flagged, so
   legacy untested code doesn't block unrelated PRs (that's what
-  `file_threshold_overrides` is *for*, for the intentional case).
+  `file_threshold_overrides` is *for*, for the intentional case). The
+  inverse case is handled too: `warn_on_stale_overrides` (off by default,
+  opt-in) flags a changed file whose real coverage now *exceeds* its
+  override — catches an override left in place after the code it was
+  excusing got real tests, quietly turning into a permanent loophole. This
+  one always uses `warn`, never `fail`, regardless of `warning_as_error` —
+  it's a suggestion, not a violation. Both reference Dangerfiles this repo
+  was seeded from had this; it was missed in the initial port and added
+  back for parity (see Vision above).
 - Per-file link resolution is a three-tier fallback: (1) if `html_report_dir`
   was just generated and `hosted_report_base_url` is set, the link is
   deterministic — `Blanket::HtmlReport.link_for` builds it straight from the
@@ -160,7 +168,7 @@ lib/
 
 ## Testing
 
-- `bundle exec rspec` — 58 examples currently, all green under local Ruby
+- `bundle exec rspec` — 67 examples currently, all green under local Ruby
   4.0.6. `spec/blanket_spec.rb` covers the plugin's orchestration logic end to
   end via a stubbed `Dangerfile`/`git`; `spec/parsers/*_spec.rb` cover each
   parser against fixture reports in `spec/fixtures/`; `spec/html_report_spec.rb`
@@ -214,6 +222,61 @@ Notes specific to this repo/plugin:
   to the user, the page just renders empty/stuck on "…"). Serve the output
   dir over plain HTTP first, eg. `python3 -m http.server <port>` from inside
   it, then open `http://localhost:<port>/index.html`.
+
+### `ios_smoke_test/` — real PR integration test for the `:xccov` parser
+
+Unlike `smoke_test/` (a couple of Kotlin files + `danger dry_run`, local only),
+`ios_smoke_test/` is a real, buildable Xcode project (`BlanketiOS`, Swift
+Testing framework) with a **shared scheme**
+(`BlanketiOS.xcodeproj/xcshareddata/xcschemes/BlanketiOS.xcscheme`,
+`codeCoverageEnabled = YES` — has to be committed and shared, CI has no
+`xcuserdata`) and its own `Dangerfile`, exercised for real by
+`.github/workflows/danger.yml` on every PR to this repo: build+test with
+coverage → real `.xcresult` → real (not dry-run) `danger` using `:xccov`.
+This is deliberate dogfooding — danger-blanket tests itself on its own PRs
+rather than a separate example repo, so the feedback loop stays fast while
+the plugin's still under active development (a public example/demo repo
+is a better fit once this is published, not while iterating quickly).
+
+- **Coverage fixtures are intentional, not incidental** — three source
+  files under `ios_smoke_test/BlanketiOS/`, each demonstrating a distinct
+  rendering path in `Blanket::HtmlReport`, verified against a *real*
+  `xcodebuild test -enableCodeCoverage YES` run (not guessed):
+  `MathHelper.swift` (100%, every branch tested), `LegacyFormatter.swift`
+  (25% — only `formatCurrency` is tested, `formatPercentage`/`formatDate`
+  aren't, on purpose — this is the "below threshold" demo file),
+  `ScoreClassifier.swift` (a one-line ternary, `label(for:)`, tested only
+  with a passing score — the line itself is `:covered` but xccov records
+  the never-reached `"fail"` literal as a sub-line `Span`, ie. the
+  "yellow highlight on an otherwise-green line" case). `AppDelegate`/
+  `SceneDelegate`/`ViewController` get partial coverage for free just from
+  simulator launch (not 0%, as you might expect) — they're excluded via
+  `parser_options[:ignore_patterns]` in `ios_smoke_test/Dangerfile` anyway,
+  mirroring the real-world `.xccovignore` convention documented below,
+  purely to keep the demo focused on the three intentional fixture files.
+- **`warning_as_error` is deliberately `false`** in `ios_smoke_test/Dangerfile`
+  (`project_threshold: 50`, `file_threshold: 80`) — `LegacyFormatter.swift`
+  (25%) is *meant* to show up as a flagged row in the PR comment, but as a
+  **warning**, not a failure, so the CI job itself stays green. This is
+  the one thing to keep in sync if the fixtures change: whatever the real
+  achieved project/file coverage ends up being, the thresholds (or
+  `warning_as_error`) need to keep the workflow passing — verified locally
+  before relying on CI by simulating exactly what the workflow does: run
+  `xcodebuild test` for real, then feed the resulting `.xcresult` through a
+  `Danger::Dangerfile` instance with `git.modified_files`/`added_files`
+  stubbed to the changed fixture files (same pattern `spec_helper.rb`'s
+  `testing_dangerfile` uses) and inspect `status_report[:warnings]`/`[:errors]`
+  directly — no need to actually push a PR to check this.
+- Not yet wired to a hosted URL (no `hosted_report_base_url` set), so links
+  in the PR comment fall back to plain GitHub file links for now; the full
+  HTML report is still generated and uploaded as a workflow build artifact
+  (`actions/upload-artifact`) so it can be downloaded and opened locally.
+  Hosting it for real (GitHub Pages is the obvious fit, given this is
+  already a public repo) is a natural follow-up, not done yet.
+- `ios_smoke_test/` is git-tracked (for CI/reproducibility) but excluded
+  from the *packaged gem* — see the `spec.files` filter in
+  `danger-blanket.gemspec` — a full Xcode project has no business being
+  inside every `gem install danger-blanket` download.
 
 ### Real-world validation (production-scale reports, not just fixtures)
 
@@ -273,9 +336,10 @@ outside of any Dangerfile.
 ## Current status (as of this session)
 
 Local testing of the plugin, including real-world validation (see above).
-Branch renamed `main` → `master`. Homepage in the gemspec:
-`https://github.com/christophersaez/danger-blanket`, MIT licensed. Not yet
-pushed to GitHub.
+Homepage in the gemspec: `https://github.com/aiKrice/danger-blanket`, MIT
+licensed. Pushed to GitHub — `origin` is `git@github.com:aiKrice/danger-blanket.git`,
+`master` is the default branch (the repo's own placeholder `main` was
+deleted after pushing real content to `master`).
 
 This session: replaced the iOS `xcov`-gem parser with `Parsers::Xccov`
 (reads an `.xcresult` bundle directly via `xcrun xccov`/`xcresulttool`, no
@@ -283,13 +347,17 @@ third-party gem), and added `Blanket::HtmlReport` — a shared, platform-
 agnostic renderer that both `Parsers::Kover` and `Parsers::Xccov` now feed
 (via new optional `lines`/`functions`/raw line-count fields on
 `Report`/`FileCoverage`), producing one consistent browsable coverage site
-regardless of platform. This also removed the old Kover HTML-scraping link
-resolution (and its `.java`/`.kt` bug class) entirely, in favor of
-deterministic path-based linking. `bundle exec rspec` (58 examples) and
-`bundle exec danger dry_run` (which now also regenerates a real static
-report under `smoke_test/coverage_report/`, gitignored) both green.
-`Parsers::Xccov` was also validated end-to-end against a real `.xcresult`
-(see "Real-world validation" above) — no bugs found.
+regardless of platform (folder-tree sidebar, i18n in 6 languages, custom
+favicon/logo via local path or `http(s)://` URL). This also removed the
+old Kover HTML-scraping link resolution (and its `.java`/`.kt` bug class)
+entirely, in favor of deterministic path-based linking. `bundle exec
+rspec` (67 examples) and `bundle exec danger dry_run` (which now also
+regenerates a real static report under `smoke_test/coverage_report/`,
+gitignored) both green. `Parsers::Xccov` was also validated end-to-end
+against a real `.xcresult` (see "Real-world validation" above) — no bugs
+found. Added `ios_smoke_test/` + `.github/workflows/danger.yml` for real
+PR-based dogfooding (see "ios_smoke_test/" above) — not yet exercised by
+an actual pushed PR, that's the next step once this is all committed.
 
 ## Open items / things to watch
 
@@ -298,6 +366,10 @@ report under `smoke_test/coverage_report/`, gitignored) both green.
 - No `.rubocop.yml` / linter config yet — decide if one gets added before
   first publish.
 - No README yet.
-- Real GitHub-flow validation (real PR, real `github.html_link`, not just
-  `dry_run`) is the next planned validation step, once local report-parsing
-  validation is done.
+- Real GitHub-flow validation: `ios_smoke_test/` + the Danger workflow are
+  written and locally verified (real `xcodebuild test`, thresholds tuned so
+  it stays green), but not yet exercised by an actual pushed PR — that's
+  the next step, once everything here is committed and pushed.
+- No hosted URL for `ios_smoke_test`'s coverage report yet (GitHub Pages is
+  the obvious fit) — links in that PR comment currently fall back to plain
+  GitHub file links; the full report is still uploaded as a build artifact.

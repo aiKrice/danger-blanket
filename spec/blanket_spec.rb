@@ -190,6 +190,61 @@ module Danger
             markdown = @dangerfile.status_report[:markdowns].first.to_s
             expect(markdown).to include("60.0% | 70% (override)")
           end
+
+          describe "stale override warnings (warn_on_stale_overrides)" do
+            before do
+              @blanket.file_threshold = 30
+              # lib/foo.rb's actual coverage (60.0%) is well above this override (30%).
+              @blanket.file_threshold_overrides = { "lib/foo.rb" => 30 }
+            end
+
+            it "does not warn about a stale override by default" do
+              @blanket.report
+
+              expect(@dangerfile.status_report[:warnings]).to eq([])
+              expect(@dangerfile.status_report[:markdowns]).to eq([])
+            end
+
+            it "warns when a file now exceeds its override, once enabled" do
+              @blanket.warn_on_stale_overrides = true
+
+              @blanket.report
+
+              markdown = @dangerfile.status_report[:markdowns].first.to_s
+              expect(markdown).to include("### 📈 Coverage override could be raised")
+              expect(markdown).to include("[lib/foo.rb](https://reports.example.com/coverage/foo.html) | 60.0% | 30%")
+              expect(@dangerfile.status_report[:warnings]).to eq([
+                "⚠️ 1 file(s) now exceed their custom coverage threshold override in file_threshold_overrides, consider raising it, see table above.",
+              ])
+            end
+
+            it "always warns (never fails), even when warning_as_error is true" do
+              @blanket.warn_on_stale_overrides = true
+              @blanket.warning_as_error = true
+
+              @blanket.report
+
+              expect(@dangerfile.status_report[:errors]).to eq([])
+              expect(@dangerfile.status_report[:warnings].size).to eq(1)
+            end
+
+            it "reports a below-threshold row and a stale-override row independently in the same run" do
+              @blanket.warn_on_stale_overrides = true
+              @blanket.file_threshold_overrides = { "lib/foo.rb" => 65, "lib/bar.rb" => 50 }
+              allow(@blanket.github).to receive(:html_link)
+                .with("lib/bar.rb")
+                .and_return("[lib/bar.rb](https://github.com/org/repo/blob/sha/lib/bar.rb)")
+
+              @blanket.report
+
+              combined = @dangerfile.status_report[:markdowns].map(&:to_s).join("\n")
+              expect(combined).to include("### 📊 Coverage below threshold")
+              expect(combined).to include("[lib/foo.rb](https://reports.example.com/coverage/foo.html) | 60.0% | 65% (override)")
+              expect(combined).to include("### 📈 Coverage override could be raised")
+              expect(combined).to include("[lib/bar.rb](https://github.com/org/repo/blob/sha/lib/bar.rb) | 90.0% | 50%")
+              expect(@dangerfile.status_report[:warnings].size).to eq(2)
+            end
+          end
         end
       end
 
