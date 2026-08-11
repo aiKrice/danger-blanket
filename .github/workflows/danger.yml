@@ -60,11 +60,15 @@ jobs:
             -enableCodeCoverage YES \
             -resultBundlePath TestResults.xcresult
 
+      # Run from the repo root, not ios_smoke_test/ - git.modified_files/
+      # added_files are always repo-root-relative, and Parsers::Xccov
+      # resolves its own file paths against Dir.pwd, so the two have to
+      # agree (see the comment in ios_smoke_test/Dangerfile) or every
+      # changed file silently fails to match and nothing gets reported.
       - name: Run danger-blanket
-        working-directory: ios_smoke_test
         env:
           DANGER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bundle exec danger --dangerfile=Dangerfile
+        run: bundle exec danger --dangerfile=ios_smoke_test/Dangerfile
 
       # Not hosted anywhere yet (see CLAUDE.md), so links in the PR comment
       # fall back to plain GitHub file links - upload as a build artifact so
