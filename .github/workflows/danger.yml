@@ -21,12 +21,30 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
 
-      # macos-15 runners ship Xcode itself but not every platform's
-      # simulator runtime pre-installed (this image only has visionOS by
-      # default) - the iOS runtime has to be fetched explicitly, or
-      # `xcodebuild test` fails to find any iOS Simulator destination at all.
-      - name: Install iOS platform (simulator runtime)
-        run: xcodebuild -downloadPlatform iOS
+      # macos-15 runners ship several Xcode versions side by side, but the
+      # one `xcode-select` defaults to only has the visionOS Simulator
+      # runtime pre-installed, not iOS - `xcodebuild test` then finds no iOS
+      # Simulator destination at all. Try every installed Xcode first (one
+      # of them usually does have it, no network needed); only fall back to
+      # an actual download (`-downloadPlatform`, needs a signed-in Apple ID
+      # to work reliably on CI) if truly none of them do.
+      - name: Select an Xcode with the iOS Simulator runtime
+        run: |
+          echo "Installed Xcode versions:"
+          ls /Applications | grep Xcode
+
+          for dev_dir in /Applications/Xcode*.app/Contents/Developer; do
+            sudo xcode-select -s "$dev_dir"
+            if xcrun simctl list runtimes 2>/dev/null | grep -q "iOS "; then
+              echo "Using $dev_dir (has an iOS runtime)"
+              xcrun simctl list runtimes
+              exit 0
+            fi
+          done
+
+          echo "No installed Xcode has an iOS runtime, downloading one..."
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -downloadPlatform iOS
 
       - name: Run tests with code coverage
         working-directory: ios_smoke_test
