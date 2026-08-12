@@ -356,8 +356,9 @@ regenerates a real static report under `smoke_test/coverage_report/`,
 gitignored) both green. `Parsers::Xccov` was also validated end-to-end
 against a real `.xcresult` (see "Real-world validation" above) — no bugs
 found. Added `ios_smoke_test/` + `.github/workflows/danger.yml` for real
-PR-based dogfooding (see "ios_smoke_test/" above) — not yet exercised by
-an actual pushed PR, that's the next step once this is all committed.
+PR-based dogfooding (see "ios_smoke_test/" above) — exercised for real on
+PR #1, including two real CI-only bugs found and fixed there (see "Open
+items" below).
 
 ## Open items / things to watch
 
@@ -366,10 +367,36 @@ an actual pushed PR, that's the next step once this is all committed.
 - No `.rubocop.yml` / linter config yet — decide if one gets added before
   first publish.
 - No README yet.
-- Real GitHub-flow validation: `ios_smoke_test/` + the Danger workflow are
-  written and locally verified (real `xcodebuild test`, thresholds tuned so
-  it stays green), but not yet exercised by an actual pushed PR — that's
-  the next step, once everything here is committed and pushed.
+- ~~Real GitHub-flow validation~~ — done: PR #1 on
+  `github.com/aiKrice/danger-blanket` exercised the full pipeline for real
+  (`.github/workflows/danger.yml`, macOS runner, real `xcodebuild test`,
+  real `bundle exec danger`, not `dry_run`) and posted a real comment
+  flagging `LegacyFormatter.swift` at 25.0%/80% with a working GitHub blob
+  link — CI job stayed green throughout, as intended. Getting there needed
+  two real fixes beyond local verification, both worth remembering:
+  (1) **CI Xcode version vs. project format**: this repo's Xcode project
+  was authored with a much newer Xcode (26.6, local) than some of what's
+  pre-installed on `macos-15` runners (as old as 16.0) — `xcodebuild
+  -showdestinations` silently refuses to consider *any* simulator eligible
+  for a scheme it can't fully parse, regardless of how many real simulators
+  exist. Select the *newest* installed Xcode with an iOS runtime
+  (`ls -d /Applications/Xcode*.app/Contents/Developer | sort -rV`), not
+  just the first one found. (2) That symptom turned out to be compounded by
+  `IPHONEOS_DEPLOYMENT_TARGET = 26.5` in the fixture project itself (an
+  Xcode-assigned default matching the local machine's own SDK) — no CI
+  runner had a matching runtime, so every destination was ineligible no
+  matter which Xcode was selected. Lowered to 18.0. (3) **Path mismatch**:
+  running `bundle exec danger` with `working-directory: ios_smoke_test`
+  broke file matching entirely — `git.modified_files`/`added_files` are
+  always repo-root-relative, but `Parsers::Xccov` resolves its own paths
+  against `Dir.pwd`, so every changed file silently failed to match
+  (Danger printed "All green" - zero violations *evaluated*, not zero
+  found). Fixed by running from the repo root with paths in
+  `ios_smoke_test/Dangerfile` adjusted accordingly - the general lesson:
+  whatever directory `bundle exec danger` runs from has to agree with what
+  git considers the repo root, always verify a Dangerfile change against a
+  real `git.modified_files` list (or a stub matching real repo-root-relative
+  paths), not just parser output in isolation.
 - No hosted URL for `ios_smoke_test`'s coverage report yet (GitHub Pages is
   the obvious fit) — links in that PR comment currently fall back to plain
   GitHub file links; the full report is still uploaded as a build artifact.
