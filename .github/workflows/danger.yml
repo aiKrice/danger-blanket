@@ -1,0 +1,83 @@
+name: Danger
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ios-smoke-test:
+    # Builds+tests the real Xcode fixture project under ios_smoke_test/ with
+    # code coverage enabled, then runs danger-blanket for real (not
+    # dry_run) against this PR via the :xccov parser. See ios_smoke_test/Dangerfile.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      # macos-15 runners ship several Xcode versions side by side. Plenty of
+      # real iPhone simulators already exist regardless of which one is
+      # selected - the actual problem was that this project was authored
+      # with a much newer Xcode (26.6) than an old one on the runner (16.x)
+      # understands, so `xcodebuild -showdestinations` refused to consider
+      # *any* simulator eligible for the scheme at all (not a missing
+      # device/runtime issue). Pick the newest installed Xcode with an iOS
+      # runtime, closest to what the project was actually authored with.
+      - name: Select the newest Xcode with an iOS runtime
+        run: |
+          echo "Installed Xcode versions:"
+          ls /Applications | grep Xcode
+
+          for dev_dir in $(ls -d /Applications/Xcode*.app/Contents/Developer | sort -rV); do
+            sudo xcode-select -s "$dev_dir"
+            if xcrun simctl list runtimes 2>/dev/null | grep -q "iOS "; then
+              echo "Using $dev_dir (has an iOS runtime)"
+              xcrun simctl list runtimes
+              exit 0
+            fi
+          done
+
+          echo "No installed Xcode has an iOS runtime, downloading one..."
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -downloadPlatform iOS
+
+      - name: Run tests with code coverage
+        working-directory: ios_smoke_test
+        run: |
+          echo "xcodebuild destinations:"
+          xcodebuild -showdestinations -project BlanketiOS.xcodeproj -scheme BlanketiOS || true
+
+          xcodebuild test \
+            -project BlanketiOS.xcodeproj \
+            -scheme BlanketiOS \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -enableCodeCoverage YES \
+            -resultBundlePath TestResults.xcresult
+
+      # Run from the repo root, not ios_smoke_test/ - git.modified_files/
+      # added_files are always repo-root-relative, and Parsers::Xccov
+      # resolves its own file paths against Dir.pwd, so the two have to
+      # agree (see the comment in ios_smoke_test/Dangerfile) or every
+      # changed file silently fails to match and nothing gets reported.
+      - name: Run danger-blanket
+        env:
+          DANGER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bundle exec danger --dangerfile=ios_smoke_test/Dangerfile
+
+      # Not hosted anywhere yet (see CLAUDE.md), so links in the PR comment
+      # fall back to plain GitHub file links - upload as a build artifact so
+      # the full line-by-line report can still be downloaded and opened
+      # locally from the workflow run.
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: ios_smoke_test/coverage_report/
+          if-no-files-found: ignore

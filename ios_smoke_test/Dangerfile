@@ -1,0 +1,19 @@
+$LOAD_PATH.unshift(File.join(__dir__, "..", "lib"))
+require "danger_plugin"
+
+# Run from the repo root (not this directory) - git.modified_files/
+# added_files are always repo-root-relative, and Parsers::Xccov resolves
+# its own file paths against Dir.pwd, so the two have to agree or every
+# changed file silently fails to match in check_file_thresholds.
+blanket.report_file = "ios_smoke_test/TestResults.xcresult"
+blanket.parser = :xccov
+blanket.parser_options = {
+  target: "BlanketiOS.app",
+  ignore_patterns: ["AppDelegate\\.swift$", "SceneDelegate\\.swift$", "ViewController\\.swift$"],
+}
+blanket.project_threshold = 50
+blanket.file_threshold = 80
+blanket.warning_as_error = false
+blanket.html_report_dir = "ios_smoke_test/coverage_report"
+blanket.html_report_title = "BlanketiOS coverage"
+blanket.report
